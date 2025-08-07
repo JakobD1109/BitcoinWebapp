@@ -1,14 +1,14 @@
-from scrape_logic import main
+from scrape_logic_lambda import main
 
 def lambda_handler(event, context):
     try:
         main()
         return {
             "statusCode": 200,
-            "body": "Scraping and insertion succeeded"
+            "body": "✅ Scraping and insertion succeeded"
         }
     except Exception as e:
         return {
             "statusCode": 500,
-            "body": f"Scraping failed: {str(e)}"
+            "body": f"❌ An error occurred: {str(e)}"
         }

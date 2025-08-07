@@ -1,0 +1,21 @@
+# Docker ignore file
+.env
+.env.example
+*.log
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.git/
+.gitignore
+README.md
+docker-commands.txt
+build-test.ps1
+awscliv2.zip
+aws/
+scrape_logic.ipynb
+.vscode/
+.pytest_cache/
+*.egg-info/

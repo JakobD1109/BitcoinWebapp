@@ -1,47 +1,18 @@
-FROM public.ecr.aws/lambda/python:3.10
+# Use AWS Lambda Python base image with specific SHA
+FROM public.ecr.aws/lambda/python:3.10@sha256:b3a2eca8924028cb9327177e1633149fda42fa051e23aff027ad81473eb90857
 
 # Install system dependencies
-RUN yum install -y \
-    unzip wget curl \
-    xorg-x11-server-Xvfb \
-    gtk3 \
-    libXcomposite libXcursor libXdamage libXext libXi libXtst \
-    cups-libs dbus-glib alsa-lib atk pango libXrandr libXss \
-    yum-plugin-versionlock \
-    && yum clean all
-
-# Add Google Chrome YUM repo
-RUN cat <<EOF > /etc/yum.repos.d/google-chrome.repo
-[google-chrome]
-name=google-chrome
-baseurl=http://dl.google.com/linux/chrome/rpm/stable/x86_64
-enabled=1
-gpgcheck=1
-gpgkey=https://dl.google.com/linux/linux_signing_key.pub
-EOF
-
-# Install specific Chrome version
-RUN yum install -y google-chrome-stable-114.0.5735.90 && \
-    yum versionlock google-chrome-stable && \
+RUN yum update -y && \
+    yum install -y wget unzip && \
     yum clean all
 
-# Install matching Chromedriver 114
-RUN wget -O /tmp/chromedriver.zip https://chromedriver.storage.googleapis.com/114.0.5735.90/chromedriver_linux64.zip && \
-    unzip /tmp/chromedriver.zip -d /usr/bin/ && \
-    chmod +x /usr/bin/chromedriver && \
-    rm /tmp/chromedriver.zip
-    
-# Set environment variables for Selenium
-ENV CHROME_BIN=/usr/bin/google-chrome-stable
-ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
-ENV PATH=$CHROMEDRIVER_PATH:$PATH
+# Install pip packages
+COPY requirements.txt ${LAMBDA_TASK_ROOT}/
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Python dependencies
-COPY requirements.txt .
-RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
+# Copy application code
+COPY scrape_logic_lambda.py ${LAMBDA_TASK_ROOT}/
+COPY app.py ${LAMBDA_TASK_ROOT}/
 
-# Copy your code
-COPY . .
-
-# Set Lambda entrypoint
+# Set the CMD to your handler
 CMD ["app.lambda_handler"]

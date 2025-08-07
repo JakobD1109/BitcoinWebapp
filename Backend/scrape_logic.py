@@ -13,6 +13,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 from textblob import TextBlob
 from dotenv import load_dotenv
 from supabase import create_client, Client
+from playwright.sync_api import sync_playwright
 import psycopg2
 
 # INIT
@@ -50,99 +51,61 @@ def create_tables_if_not_exists():
 
 
 def scrape_articles():
-    options = webdriver.ChromeOptions()
-    options.add_argument('--headless')
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
-
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-    driver.get("https://u.today/search/node?keys=bitcoin")
-    time.sleep(3)
-
-    soup = BeautifulSoup(driver.page_source, 'html.parser')
-    articles = soup.find_all('div', class_='news__item')
-
     results = []
-    for article in articles:
-        try:
-            title_tag = article.find('div', class_='news__item-title')
-            a_tag = title_tag.find_parent('a') if title_tag else None
-            href = a_tag['href'] if a_tag and 'href' in a_tag.attrs else None
-            link = href if href and href.startswith("http") else f"https://u.today{href}" if href else None
-            if not link:
-                continue
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.goto("https://u.today/search/node?keys=bitcoin", timeout=60000)
+        page.wait_for_timeout(3000)  # wait for content to load
 
-            response = requests.get(link)
-            if response.status_code != 200:
-                continue
+        soup = BeautifulSoup(page.content(), 'html.parser')
+        articles = soup.find_all('div', class_='news__item')
 
-            article_soup = BeautifulSoup(response.text, 'html.parser')
-            h1_tag = article_soup.find('h1', class_='article__title')
-            article_title = h1_tag.get_text(strip=True) if h1_tag else 'N/A'
+        for article in articles:
+            try:
+                title_tag = article.find('div', class_='news__item-title')
+                a_tag = title_tag.find_parent('a') if title_tag else None
+                href = a_tag['href'] if a_tag and 'href' in a_tag.attrs else None
+                link = href if href and href.startswith("http") else f"https://u.today{href}" if href else None
+                if not link:
+                    continue
 
-            date_tag = article_soup.find('div', class_='article__short-date')
-            raw_date = date_tag.get_text(strip=True) if date_tag else None
-            article_datetime = pd.to_datetime(raw_date, errors="coerce", dayfirst=True).strftime("%Y-%m-%dT%H:%M:%S") if raw_date else None
+                response = requests.get(link)
+                if response.status_code != 200:
+                    continue
 
-            author_tag = article_soup.find('div', class_='author-brief__name')
-            author_name = author_tag.get_text(strip=True) if author_tag else 'N/A'
-            if author_name.lower().startswith('by'):
-                author_name = author_name[2:].strip()
+                article_soup = BeautifulSoup(response.text, 'html.parser')
+                h1_tag = article_soup.find('h1', class_='article__title')
+                article_title = h1_tag.get_text(strip=True) if h1_tag else 'N/A'
 
-            p_tags = article_soup.find_all('p', attrs={'dir': 'ltr'})
-            article_text = '\n'.join([p.get_text(strip=True) for p in p_tags]) if p_tags else 'N/A'
+                date_tag = article_soup.find('div', class_='article__short-date')
+                raw_date = date_tag.get_text(strip=True) if date_tag else None
+                article_datetime = pd.to_datetime(raw_date, errors="coerce", dayfirst=True).strftime("%Y-%m-%dT%H:%M:%S") if raw_date else None
 
-            sentiment = get_sentiment_label(article_text)
+                author_tag = article_soup.find('div', class_='author-brief__name')
+                author_name = author_tag.get_text(strip=True) if author_tag else 'N/A'
+                if author_name.lower().startswith('by'):
+                    author_name = author_name[2:].strip()
 
-            results.append({
-                'title': article_title,
-                'datetime': article_datetime,
-                'author': author_name,
-                'link': link,
-                'content': article_text,
-                'sentiment': sentiment
-            })
-        except Exception as e:
-            print(f"Error processing article: {e}")
+                p_tags = article_soup.find_all('p', attrs={'dir': 'ltr'})
+                article_text = '\n'.join([p.get_text(strip=True) for p in p_tags]) if p_tags else 'N/A'
 
-    driver.quit()
+                sentiment = get_sentiment_label(article_text)
+
+                results.append({
+                    'title': article_title,
+                    'datetime': article_datetime,
+                    'author': author_name,
+                    'link': link,
+                    'content': article_text,
+                    'sentiment': sentiment
+                })
+
+            except Exception as e:
+                print(f"Error processing article: {e}")
+
+        browser.close()
     return pd.DataFrame(results)
-
-def create_tables_if_not_exists():
-    conn_str = os.getenv("DB_CONN")
-    try:
-        with psycopg2.connect(conn_str) as conn:
-            with conn.cursor() as cur:
-                cur.execute('''
-                    CREATE TABLE IF NOT EXISTS value (
-                        open_time TIMESTAMP WITH TIME ZONE PRIMARY KEY,
-                        open NUMERIC,
-                        high NUMERIC,
-                        low NUMERIC,
-                        close NUMERIC,
-                        volume NUMERIC,
-                        close_time TIMESTAMP WITH TIME ZONE,
-                        quote_asset_volume NUMERIC,
-                        number_of_trades INTEGER,
-                        taker_buy_base_asset_volume NUMERIC,
-                        taker_buy_quote_asset_volume NUMERIC,
-                        ignore TEXT
-                    );
-                ''')
-                cur.execute('''
-                    CREATE TABLE IF NOT EXISTS articles (
-                        id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-                        title TEXT,
-                        link TEXT,
-                        author TEXT,
-                        datetime TIMESTAMP WITH TIME ZONE,
-                        content TEXT,
-                        sentiment TEXT
-                    );
-                ''')
-                conn.commit()
-    except Exception as e:
-        print(f"❌ Error creating tables: {e}")
 
 def get_sentiment_label(text):
     try:
